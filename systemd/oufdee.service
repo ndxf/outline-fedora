@@ -1,0 +1,64 @@
+[Unit]
+Description=outline-fedora daemon (VPN client)
+Documentation=https://github.com/ndxf/outline-fedora
+# Networking must be up before we can create a TUN or resolve the ss:// host.
+After=network-online.target
+Wants=network-online.target
+# If the panic script exists, we always want it to run on stop even if
+# oufdee crashes. See ExecStopPost below.
+
+[Service]
+Type=simple
+ExecStart=/usr/local/sbin/oufdee \
+    --socket=/run/outline-fedora.sock \
+    --group=wheel \
+    --keys=/etc/outline-fedora/keys.json \
+    --state-dir=/var/lib/outline-fedora \
+    --resolv=/etc/resolv.conf
+
+# Belt-and-suspenders revert. Runs on ANY exit (clean or crash) with
+# whatever snapshot is on disk. If none, it's a no-op.
+ExecStopPost=/usr/local/sbin/ouf-panic
+
+# The daemon must be root to mutate netlink / write /etc/resolv.conf,
+# but we lock everything else down.
+User=root
+Group=root
+
+# Prevent the socket + state paths from being lost during aggressive
+# hardening. Both are outside the sandbox mounts we allow-list below.
+RuntimeDirectory=outline-fedora
+StateDirectory=outline-fedora
+ConfigurationDirectory=outline-fedora
+RuntimeDirectoryMode=0755
+StateDirectoryMode=0700
+ConfigurationDirectoryMode=0755
+
+# Restart policy: NEVER auto-restart. If we crash mid-connect we do
+# NOT want systemd to relaunch us and try to connect again on a dirty
+# snapshot — the user should look, then run `ouf undo` and try again.
+Restart=no
+
+# Hardening. Most of these are safe because we don't shell out much;
+# the panic script (ouf-panic) is invoked from within the daemon, so
+# we keep NoNewPrivileges off (needed for the sub-process to call sudo-
+# less setcap-free ip commands as root).
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_MODULE CAP_CHOWN CAP_DAC_OVERRIDE
+AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/etc/resolv.conf /etc/outline-fedora /var/lib/outline-fedora /run/outline-fedora.sock /proc/sys/net/ipv6/conf
+PrivateTmp=yes
+PrivateDevices=no
+# /dev/net/tun is required for TUN creation. PrivateDevices=yes hides it.
+ProtectKernelTunables=no
+# /proc/sys/net/ipv6/conf/all/disable_ipv6 is a kernel tunable we must write.
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+LockPersonality=yes
+MemoryDenyWriteExecute=yes
+
+[Install]
+WantedBy=multi-user.target

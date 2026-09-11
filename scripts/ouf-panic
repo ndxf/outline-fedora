@@ -1,0 +1,180 @@
+#!/bin/bash
+# ouf-panic: revert any host network changes made by oufdee, using the
+# snapshot at /var/lib/outline-fedora/snapshot.json. Safe to run when
+# nothing is broken (no-op). Safe to run twice. No Go, no oufdee needed.
+#
+# Exit codes:
+#   0  clean (nothing to revert, or revert succeeded)
+#   1  snapshot present but revert failed (host state may still be dirty)
+#   2  usage / precondition error (bad snapshot, missing tools)
+#
+# Environment overrides (for testing):
+#   OUF_STATE_DIR    default /var/lib/outline-fedora
+#   OUF_RESOLV_PATH  default /etc/resolv.conf (tests point at a tmp file)
+#   OUF_DRY_RUN      if set, print commands without running them
+#   OUF_VERBOSE      if set, print each step
+
+set -u
+
+STATE_DIR="${OUF_STATE_DIR:-/var/lib/outline-fedora}"
+RESOLV_PATH="${OUF_RESOLV_PATH:-/etc/resolv.conf}"
+SNAPSHOT="$STATE_DIR/snapshot.json"
+BACKUP_DIR="$STATE_DIR/backup"
+
+log()  { printf '[ouf-panic] %s\n' "$*" >&2; }
+vlog() { [ -n "${OUF_VERBOSE:-}" ] && log "$@"; return 0; }
+die()  { log "FATAL: $*"; exit 2; }
+
+# run: execute a command; respect OUF_DRY_RUN; return the command's status
+run() {
+    vlog "+ $*"
+    if [ -n "${OUF_DRY_RUN:-}" ]; then
+        return 0
+    fi
+    "$@"
+}
+
+# soft_run: like run, but never propagates failure (for idempotent deletes)
+soft_run() {
+    vlog "+ $* (soft)"
+    if [ -n "${OUF_DRY_RUN:-}" ]; then
+        return 0
+    fi
+    "$@" 2>/dev/null || true
+}
+
+require_tool() {
+    command -v "$1" >/dev/null 2>&1 || die "missing required tool: $1"
+}
+
+require_tool jq
+require_tool ip
+require_tool sysctl
+require_tool sha256sum
+
+# --- Snapshot presence check ---
+if [ ! -f "$SNAPSHOT" ]; then
+    vlog "no snapshot at $SNAPSHOT; nothing to do"
+    exit 0
+fi
+
+# --- Parse & validate schema version ---
+if ! jq -e . "$SNAPSHOT" >/dev/null 2>&1; then
+    die "snapshot at $SNAPSHOT is not valid JSON"
+fi
+
+VERSION=$(jq -r '.version // empty' "$SNAPSHOT")
+if [ "$VERSION" != "1" ]; then
+    die "unsupported snapshot version: '$VERSION' (this script handles version 1)"
+fi
+
+# --- Read our_marks (the identifiers of what we own) ---
+TUN_IFNAME=$(jq -r '.our_marks.tun_ifname // empty' "$SNAPSHOT")
+TABLE_ID=$(jq -r '.our_marks.table_id // empty' "$SNAPSHOT")
+RULE_PRIORITY=$(jq -r '.our_marks.rule_priority // empty' "$SNAPSHOT")
+
+[ -n "$TUN_IFNAME" ]     || die "snapshot missing our_marks.tun_ifname"
+[ -n "$TABLE_ID" ]       || die "snapshot missing our_marks.table_id"
+[ -n "$RULE_PRIORITY" ]  || die "snapshot missing our_marks.rule_priority"
+
+# Sanity: refuse to operate on system-critical names/IDs even if a bogus
+# snapshot says so. Belt and suspenders against a corrupted or malicious
+# snapshot.
+case "$TUN_IFNAME" in
+    ""|lo|eth*|en*|wl*|virbr*|docker*|br-*|veth*|"*")
+        die "refusing to touch reserved/critical ifname: $TUN_IFNAME"
+        ;;
+esac
+# Reserved tables per Linux: 0 (unspec), 253 (default), 254 (main), 255 (local).
+# Anything <= 255 is either reserved or in the "system" range; reject.
+if ! [ "$TABLE_ID" -gt 255 ] 2>/dev/null; then
+    die "refusing to touch reserved/system routing table id: $TABLE_ID (must be >255)"
+fi
+if [ "$RULE_PRIORITY" -lt 1000 ] 2>/dev/null; then
+    die "refusing to touch reserved rule priority: $RULE_PRIORITY (must be >=1000)"
+fi
+
+log "reverting: tun=$TUN_IFNAME table=$TABLE_ID rule=$RULE_PRIORITY"
+
+FAILED=0
+
+# --- Revert sysctls (before other things — DNS/routing may depend on IPv6) ---
+sysctl_count=$(jq -r '.pre_state.sysctls | length' "$SNAPSHOT")
+i=0
+while [ "$i" -lt "$sysctl_count" ]; do
+    KEY=$(jq -r ".pre_state.sysctls[$i].key" "$SNAPSHOT")
+    VAL=$(jq -r ".pre_state.sysctls[$i].value_before" "$SNAPSHOT")
+    if ! run sysctl -w -q "$KEY=$VAL"; then
+        log "warn: sysctl restore failed for $KEY -> $VAL"
+        FAILED=1
+    fi
+    i=$((i+1))
+done
+
+# --- Delete our ip rule (safe if absent) ---
+soft_run ip rule del priority "$RULE_PRIORITY"
+
+# --- Flush our routing table (safe: it's OUR table) ---
+soft_run ip route flush table "$TABLE_ID"
+
+# --- Delete our TUN device (safe if absent) ---
+if ip link show "$TUN_IFNAME" >/dev/null 2>&1; then
+    if ! run ip link delete "$TUN_IFNAME"; then
+        log "warn: could not delete tun $TUN_IFNAME"
+        FAILED=1
+    fi
+fi
+
+# --- Restore /etc/resolv.conf ---
+RESOLV_EXISTED=$(jq -r '.pre_state.resolv_conf.existed' "$SNAPSHOT")
+if [ "$RESOLV_EXISTED" = "true" ]; then
+    BACKUP_PATH=$(jq -r '.pre_state.resolv_conf.backup_path' "$SNAPSHOT")
+    WAS_SYMLINK=$(jq -r '.pre_state.resolv_conf.was_symlink' "$SNAPSHOT")
+    SYMLINK_TARGET=$(jq -r '.pre_state.resolv_conf.symlink_target // empty' "$SNAPSHOT")
+    SHA_BEFORE=$(jq -r '.pre_state.resolv_conf.sha256_before // empty' "$SNAPSHOT")
+
+    if [ ! -e "$BACKUP_PATH" ] && [ ! -L "$BACKUP_PATH" ]; then
+        log "warn: resolv.conf backup missing at $BACKUP_PATH; skipping resolv restore"
+        FAILED=1
+    else
+        # For a regular-file backup, verify integrity.
+        if [ "$WAS_SYMLINK" != "true" ] && [ -n "$SHA_BEFORE" ]; then
+            ACTUAL=$(sha256sum "$BACKUP_PATH" 2>/dev/null | awk '{print $1}')
+            if [ "$ACTUAL" != "$SHA_BEFORE" ]; then
+                log "warn: resolv.conf backup hash mismatch (got $ACTUAL, expected $SHA_BEFORE); skipping resolv restore"
+                FAILED=1
+            fi
+        fi
+
+        if [ "$FAILED" -eq 0 ] || [ "$WAS_SYMLINK" = "true" ]; then
+            soft_run rm -f "$RESOLV_PATH"
+            if [ "$WAS_SYMLINK" = "true" ]; then
+                [ -n "$SYMLINK_TARGET" ] || die "was_symlink=true but no symlink_target recorded"
+                if ! run ln -s "$SYMLINK_TARGET" "$RESOLV_PATH"; then
+                    log "warn: could not restore resolv.conf symlink"
+                    FAILED=1
+                fi
+            else
+                if ! run cp -a "$BACKUP_PATH" "$RESOLV_PATH"; then
+                    log "warn: could not restore resolv.conf from backup"
+                    FAILED=1
+                fi
+            fi
+        fi
+    fi
+elif [ "$RESOLV_EXISTED" = "false" ]; then
+    # It didn't exist before we started; make sure it doesn't exist now.
+    soft_run rm -f "$RESOLV_PATH"
+fi
+
+# --- If everything above worked, retire the snapshot ---
+if [ "$FAILED" -eq 0 ]; then
+    if [ -z "${OUF_DRY_RUN:-}" ]; then
+        rm -f "$SNAPSHOT"
+    fi
+    log "revert complete; snapshot cleared"
+    exit 0
+else
+    log "revert had errors; snapshot preserved at $SNAPSHOT for inspection"
+    exit 1
+fi
