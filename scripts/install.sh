@@ -14,6 +14,16 @@ fi
 
 REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
+echo "==> checking runtime dependencies"
+missing=()
+for tool in jq ip sysctl sha256sum; do
+    command -v "$tool" >/dev/null 2>&1 || missing+=("$tool")
+done
+if [ ${#missing[@]} -gt 0 ]; then
+    echo "installing missing runtime deps: ${missing[*]}"
+    dnf install -y "${missing[@]}" >/dev/null
+fi
+
 echo "==> building binaries"
 cd "$REPO_ROOT"
 make build

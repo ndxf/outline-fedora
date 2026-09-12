@@ -12,8 +12,10 @@ import "time"
 
 const (
 	// SocketPath is where oufdee listens. Group-owned by wheel so
-	// members of wheel can talk to it without sudo.
-	SocketPath = "/run/outline-fedora.sock"
+	// members of wheel can talk to it without sudo. Lives inside the
+	// systemd RuntimeDirectory so it appears/disappears with the unit
+	// and sandboxing (ReadWritePaths etc.) works cleanly.
+	SocketPath = "/run/outline-fedora/oufdee.sock"
 )
 
 // Method names — closed set. Any unknown method returns an error.

@@ -10,7 +10,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 ExecStart=/usr/local/sbin/oufdee \
-    --socket=/run/outline-fedora.sock \
+    --socket=/run/outline-fedora/oufdee.sock \
     --group=wheel \
     --keys=/etc/outline-fedora/keys.json \
     --state-dir=/var/lib/outline-fedora \
@@ -46,9 +46,15 @@ Restart=no
 CapabilityBoundingSet=CAP_NET_ADMIN CAP_NET_RAW CAP_SYS_MODULE CAP_CHOWN CAP_DAC_OVERRIDE
 AmbientCapabilities=CAP_NET_ADMIN CAP_NET_RAW
 NoNewPrivileges=yes
-ProtectSystem=strict
+# ProtectSystem is disabled: we need to rewrite /etc/resolv.conf and
+# unlink+recreate a symlink in /etc on Fedora. Every mutation is
+# snapshotted and reverted by ouf-panic. Given the daemon already runs
+# as root with CAP_NET_ADMIN + CAP_NET_RAW, "protect the rest of the
+# fs from us" is not a meaningful additional guarantee — the socket
+# protocol is the real attack surface.
+ProtectSystem=no
 ProtectHome=yes
-ReadWritePaths=/etc/resolv.conf /etc/outline-fedora /var/lib/outline-fedora /run/outline-fedora.sock /proc/sys/net/ipv6/conf
+ReadWritePaths=/var/lib/outline-fedora /run/outline-fedora /proc/sys/net/ipv6/conf
 PrivateTmp=yes
 PrivateDevices=no
 # /dev/net/tun is required for TUN creation. PrivateDevices=yes hides it.

@@ -92,8 +92,15 @@ func (c *Config) Validate() error {
 	case "", "lo":
 		return fmt.Errorf("refusing reserved tun name %q", c.TunName)
 	}
-	if c.RoutingTableID <= 255 {
-		return fmt.Errorf("routing table id must be >255 (reserved), got %d", c.RoutingTableID)
+	// Reserved: 0 (unspec), 253 (default), 254 (main), 255 (local).
+	// The rest of 1..252 is free real estate.
+	switch {
+	case c.RoutingTableID <= 0:
+		return fmt.Errorf("routing table id must be >0, got %d", c.RoutingTableID)
+	case c.RoutingTableID == 253 || c.RoutingTableID == 254 || c.RoutingTableID == 255:
+		return fmt.Errorf("routing table id %d is reserved (default/main/local)", c.RoutingTableID)
+	case c.RoutingTableID > 252 && c.RoutingTableID < 256:
+		return fmt.Errorf("routing table id %d is in reserved range", c.RoutingTableID)
 	}
 	if c.RoutingRulePriority < 1000 {
 		return fmt.Errorf("routing rule priority must be >=1000, got %d", c.RoutingRulePriority)

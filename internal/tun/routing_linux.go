@@ -59,28 +59,76 @@ func (s *Session) installRouting() error {
 		return err
 	}
 
-	// Rule: from all not to <server>/32 lookup <table>. Traffic to the
-	// SS server itself must NOT go through the tun (that would be an
-	// infinite loop through the tunnel); it goes via the main table.
+	// Rules (installed in reverse priority order so the ss-server bypass
+	// runs first — lower priority = evaluated first).
+	//
+	// Goal: internet traffic goes via the tun, but the following are
+	// preserved via the main table:
+	//   - the ss:// server itself (else infinite tunnel loop)
+	//   - RFC1918 private networks (so LAN, SSH-in, libvirt bridges keep working)
+	//   - loopback (127/8)
+	//   - link-local (169.254/16)
+	//   - multicast (224/4)
+	//
+	// One rule per exclusion, all at priorities near cfg.RoutingRulePriority
+	// (documented in the snapshot so ouf-panic removes each one).
 	svrCIDR := s.svrIP.String() + "/32"
-	svrNet, err := netlink.ParseIPNet(svrCIDR)
-	if err != nil {
-		return fmt.Errorf("parse server cidr %q: %w", svrCIDR, err)
+
+	bypasses := []struct {
+		cidr string
+		desc string
+	}{
+		{svrCIDR, "shadowsocks server"},
+		{"10.0.0.0/8", "private 10/8"},
+		{"172.16.0.0/12", "private 172.16/12"},
+		{"192.168.0.0/16", "private 192.168/16"},
+		{"127.0.0.0/8", "loopback"},
+		{"169.254.0.0/16", "link-local"},
+		{"224.0.0.0/4", "multicast"},
 	}
+	// Bypass rules: `to <cidr> lookup main` at lower priorities so they
+	// win over the catchall.
+	for i, b := range bypasses {
+		pri := s.cfg.RoutingRulePriority - len(bypasses) + i
+		if pri < 1 {
+			return fmt.Errorf("bypass rule priority underflow (base %d)", s.cfg.RoutingRulePriority)
+		}
+		dst, err := netlink.ParseIPNet(b.cidr)
+		if err != nil {
+			return fmt.Errorf("parse bypass cidr %q: %w", b.cidr, err)
+		}
+		rule := netlink.NewRule()
+		rule.Priority = pri
+		rule.Family = netlink.FAMILY_V4
+		rule.Table = 254 // main
+		rule.Dst = dst
+		spec := fmt.Sprintf("to %s lookup main (bypass %s)", b.cidr, b.desc)
+		s.snap.AppendAction(snapshot.RuleAddAction(pri, 254, spec, false))
+		if err := s.snap.Persist(); err != nil {
+			return err
+		}
+		if err := netlink.RuleAdd(rule); err != nil {
+			return fmt.Errorf("add bypass rule pri=%d dst=%s: %w", pri, b.cidr, err)
+		}
+		s.markLastActionDone()
+		if err := s.snap.Persist(); err != nil {
+			return err
+		}
+	}
+
+	// Catchall: everything else goes to our table (the default via ouftun0).
 	rule := netlink.NewRule()
 	rule.Priority = s.cfg.RoutingRulePriority
 	rule.Family = netlink.FAMILY_V4
 	rule.Table = s.cfg.RoutingTableID
-	rule.Dst = svrNet
-	rule.Invert = true
 
-	specRule := fmt.Sprintf("from all not to %s lookup %d", svrCIDR, s.cfg.RoutingTableID)
+	specRule := fmt.Sprintf("from all lookup %d (catchall)", s.cfg.RoutingTableID)
 	s.snap.AppendAction(snapshot.RuleAddAction(s.cfg.RoutingRulePriority, s.cfg.RoutingTableID, specRule, false))
 	if err := s.snap.Persist(); err != nil {
 		return err
 	}
 	if err := netlink.RuleAdd(rule); err != nil {
-		return fmt.Errorf("add ip rule pri=%d: %w", s.cfg.RoutingRulePriority, err)
+		return fmt.Errorf("add catchall rule pri=%d: %w", s.cfg.RoutingRulePriority, err)
 	}
 	s.markLastActionDone()
 	if err := s.snap.Persist(); err != nil {

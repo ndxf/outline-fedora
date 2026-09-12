@@ -1,6 +1,6 @@
 // oufdee: the outline-fedora daemon. Runs as root under systemd, owns
 // the TUN + routing + DNS mutations. CLI talks to it over a Unix
-// socket at /run/outline-fedora.sock.
+// socket at /run/outline-fedora/oufdee.sock.
 package main
 
 import (
@@ -13,7 +13,7 @@ import (
 var version = "dev"
 
 func main() {
-	socket := flag.String("socket", "/run/outline-fedora.sock", "unix socket path")
+	socket := flag.String("socket", "/run/outline-fedora/oufdee.sock", "unix socket path")
 	group := flag.String("group", "wheel", "group to chown the socket to (empty=skip)")
 	keys := flag.String("keys", "/etc/outline-fedora/keys.json", "keystore path")
 	stateDir := flag.String("state-dir", "/var/lib/outline-fedora", "state/snapshot dir")

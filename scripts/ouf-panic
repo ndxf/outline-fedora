@@ -47,16 +47,19 @@ require_tool() {
     command -v "$1" >/dev/null 2>&1 || die "missing required tool: $1"
 }
 
-require_tool jq
-require_tool ip
-require_tool sysctl
-require_tool sha256sum
-
-# --- Snapshot presence check ---
+# Snapshot presence check FIRST — if there's nothing to revert, we must
+# be a silent no-op even if jq/ip aren't on this system's PATH.
+# ExecStopPost= runs unconditionally on every daemon stop, including
+# clean stops where snapshot.json was already cleared.
 if [ ! -f "$SNAPSHOT" ]; then
     vlog "no snapshot at $SNAPSHOT; nothing to do"
     exit 0
 fi
+
+require_tool jq
+require_tool ip
+require_tool sysctl
+require_tool sha256sum
 
 # --- Parse & validate schema version ---
 if ! jq -e . "$SNAPSHOT" >/dev/null 2>&1; then
@@ -86,10 +89,13 @@ case "$TUN_IFNAME" in
         ;;
 esac
 # Reserved tables per Linux: 0 (unspec), 253 (default), 254 (main), 255 (local).
-# Anything <= 255 is either reserved or in the "system" range; reject.
-if ! [ "$TABLE_ID" -gt 255 ] 2>/dev/null; then
-    die "refusing to touch reserved/system routing table id: $TABLE_ID (must be >255)"
+# Anything else in 1..252 is free real estate for our use.
+if ! [ "$TABLE_ID" -gt 0 ] 2>/dev/null; then
+    die "refusing invalid routing table id: $TABLE_ID (must be >0)"
 fi
+case "$TABLE_ID" in
+    253|254|255) die "refusing to touch reserved routing table id: $TABLE_ID (default/main/local)" ;;
+esac
 if [ "$RULE_PRIORITY" -lt 1000 ] 2>/dev/null; then
     die "refusing to touch reserved rule priority: $RULE_PRIORITY (must be >=1000)"
 fi
@@ -111,8 +117,22 @@ while [ "$i" -lt "$sysctl_count" ]; do
     i=$((i+1))
 done
 
-# --- Delete our ip rule (safe if absent) ---
+# --- Delete every ip rule we recorded (safe if absent) ---
+# We may have installed multiple rules at different priorities (main
+# catchall + per-CIDR bypasses). The catchall is at $RULE_PRIORITY;
+# bypasses are recorded as rule_add actions in the snapshot.
 soft_run ip rule del priority "$RULE_PRIORITY"
+
+rule_count=$(jq -r '[.actions[] | select(.op=="rule_add")] | length' "$SNAPSHOT")
+i=0
+while [ "$i" -lt "$rule_count" ]; do
+    P=$(jq -r "[.actions[] | select(.op==\"rule_add\")][$i].priority" "$SNAPSHOT")
+    # Guard: refuse to touch anything <1000 (system-reserved).
+    if [ -n "$P" ] && [ "$P" -ge 1000 ] 2>/dev/null; then
+        soft_run ip rule del priority "$P"
+    fi
+    i=$((i+1))
+done
 
 # --- Flush our routing table (safe: it's OUR table) ---
 soft_run ip route flush table "$TABLE_ID"
@@ -133,7 +153,10 @@ if [ "$RESOLV_EXISTED" = "true" ]; then
     SYMLINK_TARGET=$(jq -r '.pre_state.resolv_conf.symlink_target // empty' "$SNAPSHOT")
     SHA_BEFORE=$(jq -r '.pre_state.resolv_conf.sha256_before // empty' "$SNAPSHOT")
 
-    if [ ! -e "$BACKUP_PATH" ] && [ ! -L "$BACKUP_PATH" ]; then
+    # For symlinks we don't back up file contents (we just recreate the
+    # symlink), so BackupPath is intentionally empty. Skip the backup
+    # existence check in that case.
+    if [ "$WAS_SYMLINK" != "true" ] && [ ! -e "$BACKUP_PATH" ] && [ ! -L "$BACKUP_PATH" ]; then
         log "warn: resolv.conf backup missing at $BACKUP_PATH; skipping resolv restore"
         FAILED=1
     else
