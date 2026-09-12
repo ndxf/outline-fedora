@@ -1,0 +1,17 @@
+Package: outline-fedora
+Version: @VERSION@
+Section: net
+Priority: optional
+Architecture: amd64
+Maintainer: ndxf <16838331+ndxf@users.noreply.github.com>
+Depends: iproute2, jq, systemd, coreutils
+Homepage: https://github.com/ndxf/outline-fedora
+Description: Native CLI Outline VPN client
+ outline-fedora is a native Go replacement for the upstream Outline
+ Electron client on Linux. Provides an `ouf` CLI, `oufdee` daemon, and
+ `ouf-panic` emergency revert script. Every host-mutating action
+ (TUN, routes, DNS) is recorded to a snapshot before it happens; if
+ anything goes wrong, the panic script reverts the machine to its
+ pre-connect state without needing the daemon or Go runtime.
+ .
+ Uses the Jigsaw outline-sdk (Apache-2.0) as its Shadowsocks transport.

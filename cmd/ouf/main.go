@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 ndxf
+
 // ouf: the outline-fedora CLI. Unprivileged; sends RPCs to oufdee over
 // /run/outline-fedora.sock. The `undo` subcommand also has a fallback
 // path that invokes ouf-panic directly if the daemon is unreachable.
@@ -21,14 +24,22 @@ import (
 	"github.com/ndxf/outline-fedora/internal/rpc"
 )
 
+// version is populated at build time via -ldflags "-X main.version=..."
+var version = "dev"
+
 var (
 	socketPath = flag.String("socket", rpc.SocketPath, "path to oufdee socket")
 	panicPath  = flag.String("panic-script", "/usr/local/sbin/ouf-panic", "path to ouf-panic (used by undo fallback)")
+	showVersion = flag.Bool("version", false, "print version and exit")
 )
 
 func main() {
 	flag.Usage = usage
 	flag.Parse()
+	if *showVersion {
+		fmt.Printf("ouf %s\n", version)
+		return
+	}
 	args := flag.Args()
 	if len(args) == 0 {
 		usage()

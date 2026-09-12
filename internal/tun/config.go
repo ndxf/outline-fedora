@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 ndxf
+
 // Package tun owns a single active VPN session: TUN device, routes,
 // ip rule, DNS override, IPv6 suppression, and the tun<->Shadowsocks
 // packet bridge. Every host-mutating action is recorded in a snapshot

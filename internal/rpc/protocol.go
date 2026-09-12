@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 ndxf
+
 // Package rpc defines the wire format between the ouf CLI (unprivileged
 // client) and oufdee (privileged daemon), spoken over a Unix domain
 // socket at /run/outline-fedora.sock.

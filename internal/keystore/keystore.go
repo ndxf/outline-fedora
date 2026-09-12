@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 ndxf
+
 // Package keystore manages the persistent list of ss:// keys and which
 // one is the "active" (default) target. Storage is a single JSON file
 // with an advisory flock for concurrent safety.

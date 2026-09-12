@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 ndxf
+
 // Package snapshot writes the pre-connect host-state snapshot that
 // ouf-panic reads to revert. The format is defined in docs/snapshot-format.md
 // and MUST stay wire-compatible with the shell script.

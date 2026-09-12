@@ -117,4 +117,8 @@ Nothing else is written. NetworkManager profiles, systemd-resolved config, iptab
 
 ## License
 
-Apache-2.0 (matches outline-sdk).
+AGPL-3.0-only. Copyright (c) 2026 ndxf. See [LICENSE](LICENSE).
+
+**Commercial use requires prior written permission.** The AGPL means any fork or hosted service must publish its source under the same license; contact the copyright holder for a commercial licensing exception.
+
+This project uses [outline-sdk](https://github.com/Jigsaw-Code/outline-sdk) (Apache-2.0) as a dependency; that dependency's own license terms are unchanged.

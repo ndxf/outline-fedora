@@ -1,0 +1,78 @@
+# outline-fedora RPM spec template. @VERSION@ is substituted by the
+# Makefile at build time from the VERSION file. The tarball produced by
+# `make release-tarball` is used as %{SOURCE0}.
+
+Name:           outline-fedora
+Version:        @VERSION@
+Release:        1%{?dist}
+Summary:        Native CLI Outline VPN client for Fedora
+License:        AGPL-3.0-only
+URL:            https://github.com/ndxf/outline-fedora
+Source0:        %{name}-%{version}-linux-amd64.tar.gz
+BuildArch:      x86_64
+
+# Runtime deps used by ouf-panic and oufdee.
+Requires:       iproute
+Requires:       jq
+Requires:       systemd
+Requires:       coreutils
+Requires(post): systemd
+Requires(preun): systemd
+Requires(postun): systemd
+
+# We ship pre-built binaries in the tarball; no build step here.
+# BuildRequires kept minimal so this can build in mock cleanly.
+BuildRequires:  systemd-rpm-macros
+
+%description
+outline-fedora is a native Go replacement for the upstream Outline
+Electron client on Fedora and other systemd-based Linux distributions.
+Provides an `ouf` CLI, `oufdee` daemon, and `ouf-panic` emergency
+revert script. Every host-mutating action (TUN, routes, DNS) is
+recorded to a snapshot before it happens; if anything goes wrong,
+the panic script reverts the machine to its pre-connect state without
+needing the daemon or Go runtime.
+
+Uses the Jigsaw outline-sdk (Apache-2.0) as its Shadowsocks transport.
+
+%prep
+%setup -q -n %{name}-%{version}
+
+%build
+# Nothing to build; binaries are pre-compiled in the tarball.
+:
+
+%install
+install -Dm755 ouf        %{buildroot}%{_bindir}/ouf
+install -Dm755 oufdee     %{buildroot}%{_sbindir}/oufdee
+install -Dm755 ouf-panic  %{buildroot}%{_sbindir}/ouf-panic
+install -Dm644 oufdee.service %{buildroot}%{_unitdir}/oufdee.service
+install -d -m 0755 %{buildroot}%{_sysconfdir}/outline-fedora
+install -d -m 0700 %{buildroot}%{_sharedstatedir}/outline-fedora
+install -d -m 0700 %{buildroot}%{_sharedstatedir}/outline-fedora/backup
+install -Dm644 README.md  %{buildroot}%{_docdir}/%{name}/README.md
+install -Dm644 LICENSE    %{buildroot}%{_docdir}/%{name}/LICENSE
+
+%post
+%systemd_post oufdee.service
+
+%preun
+%systemd_preun oufdee.service
+
+%postun
+%systemd_postun_with_restart oufdee.service
+
+%files
+%license LICENSE
+%doc README.md
+%{_bindir}/ouf
+%{_sbindir}/oufdee
+%{_sbindir}/ouf-panic
+%{_unitdir}/oufdee.service
+%dir %{_sysconfdir}/outline-fedora
+%dir %{_sharedstatedir}/outline-fedora
+%dir %{_sharedstatedir}/outline-fedora/backup
+
+%changelog
+* Fri Sep 12 2026 ndxf <16838331+ndxf@users.noreply.github.com> - @VERSION@-1
+- Initial packaging.

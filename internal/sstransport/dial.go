@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Copyright (c) 2026 ndxf
+
 // Package sstransport wraps the outline-sdk configurl helper so the rest
 // of the codebase can go from an ss:// URL to a stream-dialing function
 // without pulling the whole SDK surface into every caller.

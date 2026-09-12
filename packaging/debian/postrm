@@ -1,0 +1,15 @@
+#!/bin/sh
+set -e
+
+# Reload systemd so it forgets the (now-gone) unit.
+if [ -d /run/systemd/system ]; then
+    systemctl daemon-reload || true
+fi
+
+# On `purge` (not `remove`), also drop persistent state — matches Debian
+# convention that `purge` removes config too.
+if [ "$1" = "purge" ]; then
+    rm -rf /etc/outline-fedora /var/lib/outline-fedora
+fi
+
+#DEBHELPER#

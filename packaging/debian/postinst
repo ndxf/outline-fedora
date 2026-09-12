@@ -1,0 +1,21 @@
+#!/bin/sh
+set -e
+
+case "$1" in
+    configure)
+        # Make sure our state dirs exist with correct perms (deb ships
+        # them but dpkg may not enforce mode on existing dirs).
+        install -d -m 0755 /etc/outline-fedora
+        install -d -m 0700 /var/lib/outline-fedora
+        install -d -m 0700 /var/lib/outline-fedora/backup
+
+        # Reload systemd and enable-but-don't-start. User must
+        # `systemctl start oufdee` themselves; we do NOT autostart on
+        # install because there's no key configured yet.
+        if [ -d /run/systemd/system ]; then
+            systemctl daemon-reload || true
+        fi
+        ;;
+esac
+
+#DEBHELPER#
