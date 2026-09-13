@@ -57,7 +57,7 @@ install -d -m 0755 %{buildroot}%{_sysconfdir}/outline-fedora
 install -d -m 0700 %{buildroot}%{_sharedstatedir}/outline-fedora
 install -d -m 0700 %{buildroot}%{_sharedstatedir}/outline-fedora/backup
 install -Dm644 README.md  %{buildroot}%{_docdir}/%{name}/README.md
-install -Dm644 LICENSE    %{buildroot}%{_docdir}/%{name}/LICENSE
+# LICENSE goes to %{_licensedir} via %license below; don't duplicate.
 
 %post
 %systemd_post oufdee.service
