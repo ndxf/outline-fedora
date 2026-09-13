@@ -1,6 +1,12 @@
 # outline-fedora RPM spec template. @VERSION@ is substituted by the
 # Makefile at build time from the VERSION file. The tarball produced by
-# `make release-tarball` is used as %{SOURCE0}.
+# `make release-tarball` is used as %%{SOURCE0}.
+#
+# We ship pre-built stripped Go binaries in the tarball; rpmbuild does
+# no compilation, so debug-package generation must be disabled (nothing
+# to extract debuginfo from).
+%global debug_package %{nil}
+%global _build_id_links none
 
 Name:           outline-fedora
 Version:        @VERSION@
@@ -74,5 +80,5 @@ install -Dm644 LICENSE    %{buildroot}%{_docdir}/%{name}/LICENSE
 %dir %{_sharedstatedir}/outline-fedora/backup
 
 %changelog
-* Fri Sep 12 2026 ndxf <16838331+ndxf@users.noreply.github.com> - @VERSION@-1
+* Sat Sep 12 2026 ndxf <16838331+ndxf@users.noreply.github.com> - @VERSION@-1
 - Initial packaging.
